@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlienX SpeedTest</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="bg-grid"></div>
+
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <svg class="logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="16" r="14" stroke="#00d4ff" stroke-width="2"/>
+          <path d="M16 6 L20 16 L16 14 L12 22 L8 12 L16 14 Z" fill="#00d4ff"/>
+        </svg>
+        <span class="logo-text">AlienX <span class="logo-accent">SpeedTest</span></span>
+      </div>
+      <nav class="header-nav">
+        <a href="https://github.com/AlienXAXS/AlienX-SpeedTest" target="_blank" rel="noopener" class="nav-link">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero-text">
+      <h1>Network Speed Test</h1>
+      <p>Measure your connection speed with precision — single or multi-threaded</p>
+    </div>
+
+    <div class="test-card" id="test-card">
+      <!-- Speedometer -->
+      <div class="speedometer-container">
+        <svg class="speedometer" viewBox="0 0 300 240" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="glow-cyan">
+              <feGaussianBlur stdDeviation="3.5" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="glow-purple">
+              <feGaussianBlur stdDeviation="3.5" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <linearGradient id="arc-grad-download" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#0099cc"/>
+              <stop offset="100%" stop-color="#00d4ff"/>
+            </linearGradient>
+            <linearGradient id="arc-grad-upload" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#5b21b6"/>
+              <stop offset="100%" stop-color="#a855f7"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Tick marks (rendered by JS) -->
+          <g id="ticks"></g>
+
+          <!-- Background arc track -->
+          <path
+            d="M 50.41 222.5 A 115 115 0 1 1 249.59 222.5"
+            fill="none"
+            stroke="#1e2d4a"
+            stroke-width="14"
+            stroke-linecap="round"
+          />
+
+          <!-- Speed arc (animated) -->
+          <path
+            id="speed-arc"
+            d="M 50.41 222.5 A 115 115 0 1 1 249.59 222.5"
+            fill="none"
+            stroke="url(#arc-grad-download)"
+            stroke-width="14"
+            stroke-linecap="round"
+            stroke-dasharray="482.52 482.52"
+            stroke-dashoffset="482.52"
+            filter="url(#glow-cyan)"
+            style="transition: stroke-dashoffset 0.2s ease-out, stroke 0.3s ease"
+          />
+
+          <!-- Center display -->
+          <text id="speed-value" x="150" y="155" text-anchor="middle" class="speed-value-text">0.00</text>
+          <text id="speed-unit" x="150" y="181" text-anchor="middle" class="speed-unit-text">Mbps</text>
+          <text id="phase-label" x="150" y="207" text-anchor="middle" class="phase-label-text">Ready</text>
+        </svg>
+
+        <!-- Scale max label -->
+        <div class="scale-labels">
+          <span class="scale-min">0</span>
+          <span class="scale-max" id="scale-max">100</span>
+        </div>
+
+        <!-- Thread connection status -->
+        <div class="thread-status" id="thread-status" style="visibility:hidden">
+          <div class="thread-dots" id="thread-dots"></div>
+          <span class="thread-count-label" id="thread-count-label">0 / 0 threads</span>
+        </div>
+      </div>
+
+      <!-- Live stats strip -->
+      <div class="live-stats" id="live-stats">
+        <div class="live-stat">
+          <div class="live-stat-value" id="live-ping">--</div>
+          <div class="live-stat-label">Ping ms</div>
+        </div>
+        <div class="live-stat">
+          <div class="live-stat-value" id="live-download">--</div>
+          <div class="live-stat-label">Download Mbps</div>
+        </div>
+        <div class="live-stat">
+          <div class="live-stat-value" id="live-upload">--</div>
+          <div class="live-stat-label">Upload Mbps</div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls">
+        <div class="control-row">
+          <div class="control-group">
+            <label class="control-label">Test Server</label>
+            <div class="select-wrapper">
+              <select id="agent-select" class="control-select">
+                <option value="loading">Loading agents…</option>
+              </select>
+              <svg class="select-arrow" viewBox="0 0 10 6" fill="none"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Threads</label>
+            <div class="thread-buttons" id="thread-buttons">
+              <button class="thread-btn active" data-threads="1">1</button>
+              <button class="thread-btn" data-threads="2">2</button>
+              <button class="thread-btn" data-threads="4">4</button>
+              <button class="thread-btn" data-threads="8">8</button>
+              <button class="thread-btn" data-threads="16">16</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Phase progress -->
+        <div class="phase-track" id="phase-track">
+          <div class="phase-step" id="step-ping">
+            <div class="phase-dot"></div>
+            <span>Ping</span>
+          </div>
+          <div class="phase-line"></div>
+          <div class="phase-step" id="step-download">
+            <div class="phase-dot"></div>
+            <span>Download</span>
+          </div>
+          <div class="phase-line"></div>
+          <div class="phase-step" id="step-upload">
+            <div class="phase-dot"></div>
+            <span>Upload</span>
+          </div>
+        </div>
+
+        <button class="start-btn" id="start-btn">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M10 8l6 4-6 4V8z" fill="currentColor"/></svg>
+          <span id="btn-text">Start Test</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Results card -->
+    <div class="results-card" id="results-card" style="display:none">
+      <div class="results-header">
+        <svg viewBox="0 0 24 24" fill="none" class="results-icon"><path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <h2>Test Complete</h2>
+      </div>
+
+      <div class="results-grid">
+        <div class="result-item result-ping">
+          <div class="result-value" id="result-ping">--</div>
+          <div class="result-sub" id="result-jitter">-- ms jitter</div>
+          <div class="result-label">Ping</div>
+        </div>
+        <div class="result-item result-download">
+          <div class="result-value" id="result-download">--</div>
+          <div class="result-sub">Mbps</div>
+          <div class="result-label">Download</div>
+        </div>
+        <div class="result-item result-upload">
+          <div class="result-value" id="result-upload">--</div>
+          <div class="result-sub">Mbps</div>
+          <div class="result-label">Upload</div>
+        </div>
+      </div>
+
+      <div class="result-meta">
+        <div class="meta-item">
+          <svg viewBox="0 0 16 16" fill="none" width="14" height="14"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><path d="M8 4v4l2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span id="result-time">--</span>
+        </div>
+        <div class="meta-item">
+          <svg viewBox="0 0 16 16" fill="none" width="14" height="14"><path d="M8 2C5.24 2 3 4.24 3 7c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 6.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" fill="currentColor"/></svg>
+          <span id="result-server">--</span>
+        </div>
+        <div class="meta-item">
+          <svg viewBox="0 0 16 16" fill="none" width="14" height="14"><rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
+          <span id="result-threads">-- threads</span>
+        </div>
+      </div>
+
+      <div class="results-actions">
+        <button class="action-btn secondary" id="copy-btn">
+          <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/></svg>
+          Copy Results
+        </button>
+        <button class="action-btn primary" id="retest-btn">
+          <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Test Again
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <span>AlienX SpeedTest — Open Source</span>
+      <span class="footer-sep">·</span>
+      <a href="https://github.com/AlienXAXS/AlienX-SpeedTest" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

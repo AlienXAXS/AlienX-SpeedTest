@@ -1,0 +1,26 @@
+services:
+  agent:
+    build:
+      context: ./agent
+    image: ghcr.io/alienxaxs/alienx-speedtest-agent:local
+    ports:
+      - "8081:8081"
+    environment:
+      AGENT_NAME: "Local Test Server"
+      PORT: "8081"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+    image: ghcr.io/alienxaxs/alienx-speedtest-web:local
+    ports:
+      - "8080:80"
+    environment:
+      AGENT_1_NAME: "Local Test Server"
+      # This URL must be reachable from the end-user's browser, not the web container.
+      # For local dev the agent is exposed on host port 8081.
+      AGENT_1_URL: "http://localhost:8081"
+    depends_on:
+      - agent
+    restart: unless-stopped
