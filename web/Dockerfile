@@ -4,7 +4,8 @@ FROM nginx:1.27-alpine
 RUN apk add --no-cache gettext
 
 # Copy static assets
-COPY index.html style.css app.js config.js.tmpl /usr/share/nginx/html/
+COPY style.css app.js config.js.tmpl /usr/share/nginx/html/
+COPY index.html /usr/share/nginx/html/index.html.tmpl
 
 # Nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf

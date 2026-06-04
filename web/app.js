@@ -1,6 +1,6 @@
-'use strict';
+﻿'use strict';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// --- Constants ----------------------------------------------------------------
 const DOWNLOAD_DURATION_MS   = 10000;
 const UPLOAD_DURATION_MS     = 10000;
 const PING_COUNT             = 12;
@@ -13,39 +13,79 @@ const ARC_SWEEP_DEG = 240;
 const CX = 150, CY = 165, R = 115;
 const START_DEG = 150;
 
-// ─── State ────────────────────────────────────────────────────────────────────
-let threads    = 1;
-let currentMax = 100;
-let isRunning  = false;
-let results    = {};
+// --- State --------------------------------------------------------------------
+let threads          = 1;
+let currentMax       = 100;
+let isRunning        = false;
+let cancelRequested  = false;
+let results          = {};
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+// --- Helpers ------------------------------------------------------------------
+// Polls every 50 ms so a cancel request interrupts long sleeps quickly.
+const sleep = (ms) => new Promise((resolve, reject) => {
+  const TICK = 50;
+  let elapsed = 0;
+  const check = () => {
+    if (cancelRequested) return reject(new DOMException('Test cancelled', 'AbortError'));
+    elapsed += TICK;
+    if (elapsed >= ms) return resolve();
+    setTimeout(check, TICK);
+  };
+  setTimeout(check, Math.min(TICK, ms));
+});
 const $     = id  => document.getElementById(id);
 
-/** Convert http(s):// agent URL → ws(s):// */
+/** Convert http(s):// agent URL -> ws(s):// */
 function toWsUrl(httpUrl, path) {
   return httpUrl.replace(/^http/, 'ws') + path;
 }
 
-// ─── DOM refs ─────────────────────────────────────────────────────────────────
+// --- DOM refs -----------------------------------------------------------------
 const speedArc         = $('speed-arc');
 const speedValue       = $('speed-value');
 const speedUnit        = $('speed-unit');
 const phaseLabel       = $('phase-label');
 const startBtn         = $('start-btn');
 const btnText          = $('btn-text');
+const btnIcon          = startBtn.querySelector('.btn-icon');
 const agentSelect      = $('agent-select');
 const scaleMax         = $('scale-max');
 const livePing         = $('live-ping');
 const liveDownload     = $('live-download');
 const liveUpload       = $('live-upload');
+const testCard         = $('test-card');
 const resultsCard      = $('results-card');
 const threadStatus     = $('thread-status');
 const threadDotsEl     = $('thread-dots');
 const threadCountLabel = $('thread-count-label');
 
-// ─── Agent config ─────────────────────────────────────────────────────────────
+// --- Fade helpers -------------------------------------------------------------
+function fadeOut(el, ms = 320) {
+  return new Promise(resolve => {
+    el.style.transition = `opacity ${ms}ms ease`;
+    el.style.opacity = '0';
+    el.style.pointerEvents = 'none';
+    setTimeout(() => {
+      el.style.display = 'none';
+      el.style.transition = el.style.opacity = el.style.pointerEvents = '';
+      resolve();
+    }, ms);
+  });
+}
+
+function fadeIn(el, ms = 320) {
+  el.style.opacity = '0';
+  el.style.display = '';
+  return new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.style.transition = `opacity ${ms}ms ease`;
+      el.style.opacity = '1';
+      setTimeout(() => { el.style.transition = ''; resolve(); }, ms);
+    }));
+  });
+}
+
+// --- Agent config -------------------------------------------------------------
 function loadAgents() {
   const agents = (typeof window.SPEEDTEST_AGENTS !== 'undefined' && window.SPEEDTEST_AGENTS.length)
     ? window.SPEEDTEST_AGENTS.filter(a => a.url)
@@ -60,10 +100,12 @@ function loadAgents() {
   });
 }
 
-// ─── Thread dot UI ────────────────────────────────────────────────────────────
+// --- Thread dot UI ------------------------------------------------------------
 let dotStates = [];
+let dotGeneration = 0;
 
 function initDots(count) {
+  dotGeneration++;
   threadDotsEl.innerHTML = '';
   dotStates = Array(count).fill('idle');
   for (let i = 0; i < count; i++) {
@@ -74,9 +116,11 @@ function initDots(count) {
   }
   threadStatus.style.visibility = 'visible';
   updateThreadLabel();
+  return dotGeneration;
 }
 
-function setDot(i, state) {
+function setDot(i, state, gen) {
+  if (gen !== dotGeneration) return;
   dotStates[i] = state;
   const el = $(`dot-${i}`);
   if (!el) return;
@@ -89,7 +133,7 @@ function updateThreadLabel() {
   const connecting  = dotStates.filter(s => s === 'connecting').length;
   const total       = dotStates.length;
   if (active === 0 && connecting > 0) {
-    threadCountLabel.textContent = `Connecting… ${connecting} / ${total}`;
+    threadCountLabel.textContent = `Connecting... ${connecting} / ${total}`;
   } else if (active > 0) {
     threadCountLabel.textContent = `${active} / ${total} threads active`;
   } else {
@@ -101,7 +145,7 @@ function hideThreadStatus() {
   threadStatus.style.visibility = 'hidden';
 }
 
-// ─── Speedometer ─────────────────────────────────────────────────────────────
+// --- Speedometer -------------------------------------------------------------
 function svgPoint(angleDeg, radius) {
   const rad = (angleDeg * Math.PI) / 180;
   return { x: CX + radius * Math.cos(rad), y: CY + radius * Math.sin(rad) };
@@ -173,7 +217,7 @@ function resetSpeedometer() {
   phaseLabel.textContent = 'Ready';
 }
 
-// ─── Phase UI ─────────────────────────────────────────────────────────────────
+// --- Phase UI -----------------------------------------------------------------
 function setPhase(name) {
   const order = ['ping', 'download', 'upload'];
   const idx   = order.indexOf(name);
@@ -199,38 +243,42 @@ function allPhaseDone() {
   phaseLabel.textContent = 'COMPLETE';
 }
 
-// ─── Mode ─────────────────────────────────────────────────────────────────────
+// --- Mode ---------------------------------------------------------------------
 const USE_WEBSOCKET = (window.SPEEDTEST_MODE || 'websocket') !== 'http';
 
-// ─── Ping test (HTTP — no buffering concern here) ─────────────────────────────
+// --- Ping test (HTTP - no buffering concern here) -----------------------------
 async function runPing(agentUrl) {
+  console.log(`[SpeedTest] Ping started -> ${agentUrl}`);
   const latencies = [];
   for (let i = 0; i < PING_COUNT; i++) {
+    if (cancelRequested) throw new DOMException('Test cancelled', 'AbortError');
     const t0 = performance.now();
     try { await fetch(`${agentUrl}/ping`, { cache: 'no-store' }); } catch { continue; }
     latencies.push(performance.now() - t0);
   }
-  if (!latencies.length) throw new Error('Ping failed — agent not reachable');
+  if (!latencies.length) throw new Error('Ping failed - agent not reachable');
   const avg    = latencies.reduce((a, b) => a + b, 0) / latencies.length;
   const jitter = latencies.reduce((acc, v, i, arr) =>
     i === 0 ? 0 : acc + Math.abs(v - arr[i - 1]), 0) / Math.max(latencies.length - 1, 1);
+  console.log(`[SpeedTest] Ping complete: ${avg.toFixed(1)} ms avg, +/-${jitter.toFixed(1)} ms jitter`);
   return { ping: avg, jitter };
 }
 
-// ─── WebSocket: Download ──────────────────────────────────────────────────────
+// --- WebSocket: Download ------------------------------------------------------
 // N connections receive binary frames from the server; we count bytes as they arrive.
 async function runDownload(agentUrl, threadCount) {
   const wsUrl = toWsUrl(agentUrl, '/ws/download');
+  console.log(`[SpeedTest] Download started -> ${wsUrl} (${threadCount} thread${threadCount !== 1 ? 's' : ''})`);
   let totalBytes     = 0;
   let measureStart   = null;
   let running        = true;
   let connectedCount = 0;
 
-  initDots(threadCount);
+  const gen = initDots(threadCount);
 
   const doThread = async (idx) => {
     while (running) {
-      setDot(idx, 'connecting');
+      setDot(idx, 'connecting', gen);
 
       await new Promise((resolve) => {
         let ws;
@@ -247,19 +295,21 @@ async function runDownload(agentUrl, threadCount) {
 
         ws.onopen = () => {
           connectedCount++;
-          setDot(idx, 'active-download');
+          console.log(`[SpeedTest] Download thread ${idx} connected (${connectedCount}/${threadCount})`);
+          setDot(idx, 'active-download', gen);
         };
 
         ws.onmessage = (e) => {
           if (e.data instanceof ArrayBuffer) totalBytes += e.data.byteLength;
         };
 
-        ws.onerror = () => { clearInterval(stopWatcher); resolve(); };
+        ws.onerror = (e) => { console.warn(`[SpeedTest] Download thread ${idx} socket error`, e); clearInterval(stopWatcher); resolve(); };
 
-        ws.onclose = () => {
+        ws.onclose = (e) => {
           clearInterval(stopWatcher);
           connectedCount = Math.max(0, connectedCount - 1);
-          setDot(idx, 'idle');
+          console.log(`[SpeedTest] Download thread ${idx} disconnected (code ${e.code})`);
+          setDot(idx, 'idle', gen);
           resolve();
         };
       });
@@ -267,7 +317,7 @@ async function runDownload(agentUrl, threadCount) {
       if (!running) break;
       await sleep(200);
     }
-    setDot(idx, 'idle');
+    setDot(idx, 'idle', gen);
   };
 
   for (let i = 0; i < threadCount; i++) doThread(i);
@@ -275,7 +325,7 @@ async function runDownload(agentUrl, threadCount) {
   // Wait for ALL threads to connect before starting the clock
   const deadline = performance.now() + CONNECT_TIMEOUT_MS;
   while (connectedCount < threadCount && performance.now() < deadline) await sleep(50);
-  if (connectedCount === 0) throw new Error('WebSocket download connections timed out — is the agent running?');
+  if (connectedCount === 0) throw new Error('WebSocket download connections timed out - is the agent running?');
   measureStart = performance.now();
 
   const interval = setInterval(() => {
@@ -287,20 +337,26 @@ async function runDownload(agentUrl, threadCount) {
     }
   }, 200);
 
-  await sleep(DOWNLOAD_DURATION_MS);
-  running = false;
-  clearInterval(interval);
+  try {
+    await sleep(DOWNLOAD_DURATION_MS);
+  } finally {
+    running = false;
+    clearInterval(interval);
+  }
 
   const finalSec = (performance.now() - measureStart) / 1000;
-  return (totalBytes * 8) / (finalSec * 1e6);
+  const dlMbps = (totalBytes * 8) / (finalSec * 1e6);
+  console.log(`[SpeedTest] Download complete: ${dlMbps.toFixed(2)} Mbps`);
+  return dlMbps;
 }
 
-// ─── WebSocket: Upload ────────────────────────────────────────────────────────
+// --- WebSocket: Upload --------------------------------------------------------
 // N connections send binary frames; server ACKs each frame with {"received":N}.
-// We measure throughput from ACKs — what the origin server actually received —
+// We measure throughput from ACKs - what the origin server actually received -
 // so results are accurate even behind a proxy that buffers HTTP uploads.
 async function runUpload(agentUrl, threadCount) {
   const wsUrl = toWsUrl(agentUrl, '/ws/upload');
+  console.log(`[SpeedTest] Upload started -> ${wsUrl} (${threadCount} thread${threadCount !== 1 ? 's' : ''})`);
 
   // Pre-fill an ArrayBuffer with non-zero bytes (some proxies may skip zero payloads)
   const frameBuffer = new ArrayBuffer(WS_FRAME_SIZE);
@@ -314,11 +370,11 @@ async function runUpload(agentUrl, threadCount) {
   let running        = true;
   let connectedCount = 0;
 
-  initDots(threadCount);
+  const gen = initDots(threadCount);
 
   const doThread = async (idx) => {
     while (running) {
-      setDot(idx, 'connecting-upload');
+      setDot(idx, 'connecting-upload', gen);
       serverReceivedBase[idx] += serverReceived[idx];
       serverReceived[idx] = 0;
 
@@ -337,7 +393,8 @@ async function runUpload(agentUrl, threadCount) {
 
         ws.onopen = () => {
           connectedCount++;
-          setDot(idx, 'active-upload');
+          console.log(`[SpeedTest] Upload thread ${idx} connected (${connectedCount}/${threadCount})`);
+          setDot(idx, 'active-upload', gen);
 
           // Don't start sending until measureStart is set (all threads connected)
           const waitAndSend = () => {
@@ -363,12 +420,13 @@ async function runUpload(agentUrl, threadCount) {
           } catch { /* ignore malformed frames */ }
         };
 
-        ws.onerror = () => { clearInterval(stopWatcher); resolve(); };
+        ws.onerror = (e) => { console.warn(`[SpeedTest] Upload thread ${idx} socket error`, e); clearInterval(stopWatcher); resolve(); };
 
-        ws.onclose = () => {
+        ws.onclose = (e) => {
           clearInterval(stopWatcher);
           connectedCount = Math.max(0, connectedCount - 1);
-          setDot(idx, 'idle');
+          console.log(`[SpeedTest] Upload thread ${idx} disconnected (code ${e.code})`);
+          setDot(idx, 'idle', gen);
           resolve();
         };
       });
@@ -376,7 +434,7 @@ async function runUpload(agentUrl, threadCount) {
       if (!running) break;
       await sleep(200);
     }
-    setDot(idx, 'idle');
+    setDot(idx, 'idle', gen);
   };
 
   for (let i = 0; i < threadCount; i++) doThread(i);
@@ -384,7 +442,7 @@ async function runUpload(agentUrl, threadCount) {
   // Wait for ALL threads to connect before starting the clock
   const deadline = performance.now() + CONNECT_TIMEOUT_MS;
   while (connectedCount < threadCount && performance.now() < deadline) await sleep(50);
-  if (connectedCount === 0) throw new Error('WebSocket upload connections timed out — is the agent running?');
+  if (connectedCount === 0) throw new Error('WebSocket upload connections timed out - is the agent running?');
   measureStart = performance.now();
 
   const interval = setInterval(() => {
@@ -398,29 +456,35 @@ async function runUpload(agentUrl, threadCount) {
     }
   }, 200);
 
-  await sleep(UPLOAD_DURATION_MS);
-  running = false;
-  clearInterval(interval);
+  try {
+    await sleep(UPLOAD_DURATION_MS);
+  } finally {
+    running = false;
+    clearInterval(interval);
+  }
 
   const finalSec   = (performance.now() - measureStart) / 1000;
   const totalAcked = serverReceived.reduce((a, b) => a + b, 0) +
                      serverReceivedBase.reduce((a, b) => a + b, 0);
-  return (totalAcked * 8) / (finalSec * 1e6);
+  const ulMbps = (totalAcked * 8) / (finalSec * 1e6);
+  console.log(`[SpeedTest] Upload complete: ${ulMbps.toFixed(2)} Mbps`);
+  return ulMbps;
 }
 
-// ─── HTTP fallback: Download ──────────────────────────────────────────────────
+// --- HTTP fallback: Download --------------------------------------------------
 async function runDownloadHTTP(agentUrl, threadCount) {
+  console.log(`[SpeedTest] Download (HTTP) started -> ${agentUrl} (${threadCount} thread${threadCount !== 1 ? 's' : ''})`);
   const BYTES = 25 * 1024 * 1024;
   let totalBytes     = 0;
   let running        = true;
   let measureStart   = null;
   let connectedCount = 0;
 
-  initDots(threadCount);
+  const gen = initDots(threadCount);
 
   const doThread = async (idx) => {
     while (running) {
-      setDot(idx, 'connecting');
+      setDot(idx, 'connecting', gen);
       const controller = new AbortController();
       const connectTimer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
       let resp;
@@ -429,13 +493,14 @@ async function runDownloadHTTP(agentUrl, threadCount) {
         clearTimeout(connectTimer);
       } catch {
         clearTimeout(connectTimer);
-        setDot(idx, 'idle');
+        setDot(idx, 'idle', gen);
         if (!running) return;
         await sleep(500);
         continue;
       }
       connectedCount++;
-      setDot(idx, 'active-download');
+      console.log(`[SpeedTest] Download (HTTP) thread ${idx} connected (${connectedCount}/${threadCount})`);
+      setDot(idx, 'active-download', gen);
       // Wait for measureStart to be set (all threads connected) before counting bytes
       while (!measureStart) await sleep(20);
       const reader = resp.body.getReader();
@@ -448,7 +513,7 @@ async function runDownloadHTTP(agentUrl, threadCount) {
       } catch { /* interrupted */ }
       connectedCount = Math.max(0, connectedCount - 1);
     }
-    setDot(idx, 'idle');
+    setDot(idx, 'idle', gen);
   };
 
   for (let i = 0; i < threadCount; i++) doThread(i);
@@ -467,14 +532,20 @@ async function runDownloadHTTP(agentUrl, threadCount) {
     }
   }, 200);
 
-  await sleep(DOWNLOAD_DURATION_MS);
-  running = false;
-  clearInterval(interval);
-  return (totalBytes * 8) / ((performance.now() - measureStart) / 1000 / 1e6);
+  try {
+    await sleep(DOWNLOAD_DURATION_MS);
+  } finally {
+    running = false;
+    clearInterval(interval);
+  }
+  const dlHttpMbps = (totalBytes * 8) / ((performance.now() - measureStart) / 1000 / 1e6);
+  console.log(`[SpeedTest] Download (HTTP) complete: ${dlHttpMbps.toFixed(2)} Mbps`);
+  return dlHttpMbps;
 }
 
-// ─── HTTP fallback: Upload ────────────────────────────────────────────────────
+// --- HTTP fallback: Upload ----------------------------------------------------
 async function runUploadHTTP(agentUrl, threadCount) {
+  console.log(`[SpeedTest] Upload (HTTP) started -> ${agentUrl} (${threadCount} thread${threadCount !== 1 ? 's' : ''})`);
   const BLOB_SIZE = 25 * 1024 * 1024;
   const blob = new Blob([new Uint8Array(BLOB_SIZE)]);
   let uploadedBytes  = 0;
@@ -482,14 +553,15 @@ async function runUploadHTTP(agentUrl, threadCount) {
   let measureStart   = null;
   let connectedCount = 0;
 
-  initDots(threadCount);
+  const gen = initDots(threadCount);
 
   const doThread = async (idx) => {
-    setDot(idx, 'connecting-upload');
+    setDot(idx, 'connecting-upload', gen);
     connectedCount++;
+    console.log(`[SpeedTest] Upload (HTTP) thread ${idx} ready (${connectedCount}/${threadCount})`);
     // Wait for all threads to be ready before starting
     while (!measureStart) await sleep(20);
-    setDot(idx, 'active-upload');
+    setDot(idx, 'active-upload', gen);
     while (running) {
       const controller = new AbortController();
       const reqTimer = setTimeout(() => controller.abort(), 20000);
@@ -507,7 +579,7 @@ async function runUploadHTTP(agentUrl, threadCount) {
         await sleep(200);
       }
     }
-    setDot(idx, 'idle');
+    setDot(idx, 'idle', gen);
   };
 
   for (let i = 0; i < threadCount; i++) doThread(i);
@@ -526,13 +598,18 @@ async function runUploadHTTP(agentUrl, threadCount) {
     }
   }, 200);
 
-  await sleep(UPLOAD_DURATION_MS);
-  running = false;
-  clearInterval(interval);
-  return (uploadedBytes * 8) / ((performance.now() - measureStart) / 1000 / 1e6);
+  try {
+    await sleep(UPLOAD_DURATION_MS);
+  } finally {
+    running = false;
+    clearInterval(interval);
+  }
+  const ulHttpMbps = (uploadedBytes * 8) / ((performance.now() - measureStart) / 1000 / 1e6);
+  console.log(`[SpeedTest] Upload (HTTP) complete: ${ulHttpMbps.toFixed(2)} Mbps`);
+  return ulHttpMbps;
 }
 
-// ─── Results ──────────────────────────────────────────────────────────────────
+// --- Results ------------------------------------------------------------------
 function formatSpeed(mbps) {
   if (mbps >= 1000) return `${(mbps / 1000).toFixed(2)} Gbps`;
   return mbps >= 100 ? `${mbps.toFixed(1)}` : `${mbps.toFixed(2)}`;
@@ -540,51 +617,52 @@ function formatSpeed(mbps) {
 
 function showResults(r) {
   $('result-ping').textContent     = `${r.ping.toFixed(1)} ms`;
-  $('result-jitter').textContent   = `±${r.jitter.toFixed(1)} ms jitter`;
+  $('result-jitter').textContent   = `+/-${r.jitter.toFixed(1)} ms jitter`;
   $('result-download').textContent = formatSpeed(r.download);
   $('result-upload').textContent   = formatSpeed(r.upload);
   $('result-server').textContent   = r.serverName;
   $('result-threads').textContent  = `${r.threads} thread${r.threads !== 1 ? 's' : ''}`;
   $('result-time').textContent     = new Date().toLocaleString();
-  resultsCard.style.display = 'block';
-  resultsCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  fadeOut(testCard).then(() => fadeIn(resultsCard));
 }
 
-// ─── Copy results ─────────────────────────────────────────────────────────────
+// --- Copy results -------------------------------------------------------------
 $('copy-btn').addEventListener('click', () => {
   const r    = results;
   const text =
 `AlienX SpeedTest Results
-━━━━━━━━━━━━━━━━━━━━━━━━━
-Ping:     ${r.ping.toFixed(1)} ms (±${r.jitter.toFixed(1)} ms jitter)
+-------------------------
+Ping:     ${r.ping.toFixed(1)} ms (+/-${r.jitter.toFixed(1)} ms jitter)
 Download: ${formatSpeed(r.download)} Mbps
 Upload:   ${formatSpeed(r.upload)} Mbps
 Server:   ${r.serverName}
 Threads:  ${r.threads}
 Date:     ${new Date().toLocaleString()}
-━━━━━━━━━━━━━━━━━━━━━━━━━
-Tested with AlienX SpeedTest — https://github.com/AlienXAXS/AlienX-SpeedTest`;
+-------------------------
+Tested with AlienX SpeedTest - https://github.com/AlienXAXS/AlienX-SpeedTest`;
 
   navigator.clipboard.writeText(text).then(() => {
     const btn = $('copy-btn');
-    btn.textContent = '✓ Copied!';
+    btn.textContent = '+ Copied!';
     setTimeout(() => {
       btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" width="16" height="16"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/></svg> Copy Results`;
     }, 2000);
   });
 });
 
-// ─── Retest ───────────────────────────────────────────────────────────────────
+// --- Retest -------------------------------------------------------------------
 $('retest-btn').addEventListener('click', () => {
-  resultsCard.style.display = 'none';
-  resetSpeedometer();
-  hideThreadStatus();
-  livePing.textContent = liveDownload.textContent = liveUpload.textContent = '--';
-  ['ping', 'download', 'upload'].forEach(p => $(`step-${p}`).classList.remove('active', 'done'));
-  document.querySelectorAll('.phase-line').forEach(l => l.classList.remove('done'));
+  fadeOut(resultsCard).then(() => {
+    resetSpeedometer();
+    hideThreadStatus();
+    livePing.textContent = liveDownload.textContent = liveUpload.textContent = '--';
+    ['ping', 'download', 'upload'].forEach(p => $(`step-${p}`).classList.remove('active', 'done'));
+    document.querySelectorAll('.phase-line').forEach(l => l.classList.remove('done'));
+    fadeIn(testCard);
+  });
 });
 
-// ─── Thread button clicks ─────────────────────────────────────────────────────
+// --- Thread button clicks -----------------------------------------------------
 document.querySelectorAll('.thread-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     if (isRunning) return;
@@ -594,30 +672,41 @@ document.querySelectorAll('.thread-btn').forEach(btn => {
   });
 });
 
-// ─── Main test runner ─────────────────────────────────────────────────────────
+// --- Main test runner ---------------------------------------------------------
 startBtn.addEventListener('click', async () => {
-  if (isRunning) return;
+  if (isRunning) {
+    if (cancelRequested) return; // already cancelling, ignore double-click
+    cancelRequested = true;
+    console.log('[SpeedTest] Cancel requested');
+    startBtn.classList.remove('running');
+    startBtn.classList.add('cancelling');
+    startBtn.disabled = true;
+    btnText.textContent = 'Cancelling...';
+    return;
+  }
 
   const agentUrl   = agentSelect.value;
   if (!agentUrl || agentUrl === 'loading') return;
   const serverName = agentSelect.options[agentSelect.selectedIndex].textContent;
 
-  isRunning = true;
+  isRunning       = true;
+  cancelRequested = false;
+  console.log(`[SpeedTest] Test started: server="${serverName}" threads=${threads} mode=${USE_WEBSOCKET ? 'websocket' : 'http'}`);
   resultsCard.style.display = 'none';
   resetSpeedometer();
-  startBtn.disabled = true;
   startBtn.classList.add('running');
-  btnText.textContent = 'Running…';
+  btnIcon.innerHTML = '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>';
+  btnText.textContent = 'Cancel Test';
   document.querySelectorAll('.thread-btn, .control-select').forEach(el => el.disabled = true);
   livePing.textContent = liveDownload.textContent = liveUpload.textContent = '--';
 
   try {
-    // ── Ping (HTTP) ───────────────────────────────────────────────────────────
+    // -- Ping (HTTP) -----------------------------------------------------------
     setPhase('ping');
     const pingResult = await runPing(agentUrl);
     livePing.textContent = pingResult.ping.toFixed(1);
 
-    // ── Download ──────────────────────────────────────────────────────────────
+    // -- Download --------------------------------------------------------------
     setArcFraction(0, 'download');
     speedValue.textContent = '0.00';
     setPhase('download');
@@ -626,7 +715,7 @@ startBtn.addEventListener('click', async () => {
       : await runDownloadHTTP(agentUrl, threads);
     liveDownload.textContent = downloadMbps.toFixed(1);
 
-    // ── Upload ────────────────────────────────────────────────────────────────
+    // -- Upload ----------------------------------------------------------------
     currentMax = 100;
     scaleMax.textContent = '100';
     drawTicks();
@@ -638,29 +727,40 @@ startBtn.addEventListener('click', async () => {
       : await runUploadHTTP(agentUrl, threads);
     liveUpload.textContent = uploadMbps.toFixed(1);
 
-    // ── Done ──────────────────────────────────────────────────────────────────
+    // -- Done ------------------------------------------------------------------
     allPhaseDone();
     updateSpeedometer(downloadMbps, 'download');
     hideThreadStatus();
 
     results = { ping: pingResult.ping, jitter: pingResult.jitter, download: downloadMbps, upload: uploadMbps, serverName, threads };
+    console.log(`[SpeedTest] Test complete: ping=${pingResult.ping.toFixed(1)}ms, download=${downloadMbps.toFixed(2)}Mbps, upload=${uploadMbps.toFixed(2)}Mbps`);
     showResults(results);
 
   } catch (err) {
-    phaseLabel.textContent = 'ERROR';
-    speedValue.textContent = '!';
     hideThreadStatus();
-    console.error('SpeedTest error:', err);
-    alert(`Test failed: ${err.message}\n\nMake sure the agent is running and reachable.`);
+    if (err.name === 'AbortError') {
+      console.log('[SpeedTest] Test cancelled');
+      resetSpeedometer();
+      ['ping', 'download', 'upload'].forEach(p => $(`step-${p}`).classList.remove('active', 'done'));
+      document.querySelectorAll('.phase-line').forEach(l => l.classList.remove('done'));
+      livePing.textContent = liveDownload.textContent = liveUpload.textContent = '--';
+    } else {
+      phaseLabel.textContent = 'ERROR';
+      speedValue.textContent = '!';
+      console.error('SpeedTest error:', err);
+      alert(`Test failed: ${err.message}\n\nMake sure the agent is running and reachable.`);
+    }
   } finally {
-    isRunning = false;
+    isRunning       = false;
+    cancelRequested = false;
     startBtn.disabled = false;
-    startBtn.classList.remove('running');
+    startBtn.classList.remove('running', 'cancelling');
+    btnIcon.innerHTML = '<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M10 8l6 4-6 4V8z" fill="currentColor"/>';
     btnText.textContent = 'Start Test';
     document.querySelectorAll('.thread-btn, .control-select').forEach(el => el.disabled = false);
   }
 });
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
+// --- Init ---------------------------------------------------------------------
 loadAgents();
 drawTicks();

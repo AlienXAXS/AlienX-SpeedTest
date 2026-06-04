@@ -1,4 +1,4 @@
-/* ─── Reset & base ─────────────────────────────────────────────────────────── */
+﻿/* --- Reset & base ----------------------------------------------------------- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -39,7 +39,7 @@ body {
   overflow-x: hidden;
 }
 
-/* ─── Background grid ──────────────────────────────────────────────────────── */
+/* --- Background grid -------------------------------------------------------- */
 .bg-grid {
   position: fixed;
   inset: 0;
@@ -51,7 +51,7 @@ body {
   pointer-events: none;
 }
 
-/* ─── Header ───────────────────────────────────────────────────────────────── */
+/* --- Header ----------------------------------------------------------------- */
 header {
   position: relative;
   z-index: 10;
@@ -108,7 +108,7 @@ header {
   background: var(--cyan-dim);
 }
 
-/* ─── Main ─────────────────────────────────────────────────────────────────── */
+/* --- Main ------------------------------------------------------------------- */
 main {
   position: relative;
   z-index: 1;
@@ -123,7 +123,7 @@ main {
   gap: 28px;
 }
 
-/* ─── Hero text ────────────────────────────────────────────────────────────── */
+/* --- Hero text -------------------------------------------------------------- */
 .hero-text { text-align: center; }
 .hero-text h1 {
   font-size: 2rem;
@@ -140,7 +140,7 @@ main {
   font-size: 0.95rem;
 }
 
-/* ─── Test card ────────────────────────────────────────────────────────────── */
+/* --- Test card -------------------------------------------------------------- */
 .test-card {
   width: 100%;
   background: var(--surface);
@@ -154,7 +154,7 @@ main {
   gap: 24px;
 }
 
-/* ─── Speedometer ──────────────────────────────────────────────────────────── */
+/* --- Speedometer ------------------------------------------------------------ */
 .speedometer-container {
   position: relative;
   width: 100%;
@@ -201,7 +201,7 @@ main {
   color: var(--text-muted);
 }
 
-/* ─── Live stats ───────────────────────────────────────────────────────────── */
+/* --- Live stats ------------------------------------------------------------- */
 .live-stats {
   display: flex;
   gap: 20px;
@@ -235,7 +235,7 @@ main {
   letter-spacing: 0.08em;
 }
 
-/* ─── Controls ─────────────────────────────────────────────────────────────── */
+/* --- Controls --------------------------------------------------------------- */
 .controls {
   width: 100%;
   display: flex;
@@ -405,10 +405,20 @@ main {
   background: linear-gradient(135deg, #4a1080, var(--purple));
   box-shadow: 0 4px 20px rgba(168, 85, 247, 0.3);
 }
+.start-btn.running:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7f1d1d, #dc2626);
+  box-shadow: 0 6px 28px rgba(220, 38, 38, 0.45);
+}
+.start-btn.cancelling {
+  background: linear-gradient(135deg, #7f1d1d, #dc2626);
+  box-shadow: 0 4px 20px rgba(220, 38, 38, 0.3);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
 
 .btn-icon { width: 20px; height: 20px; }
 
-/* ─── Results card ─────────────────────────────────────────────────────────── */
+/* --- Results card ----------------------------------------------------------- */
 .results-card {
   width: 100%;
   background: var(--surface);
@@ -416,12 +426,6 @@ main {
   border-radius: var(--radius-lg);
   padding: 28px;
   box-shadow: var(--shadow);
-  animation: slideUp 0.4s ease-out;
-}
-
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
 }
 
 .results-header {
@@ -553,7 +557,7 @@ main {
 }
 .action-btn.primary:hover { transform: translateY(-1px); box-shadow: 0 5px 20px rgba(0, 212, 255, 0.4); }
 
-/* ─── Footer ───────────────────────────────────────────────────────────────── */
+/* --- Footer ----------------------------------------------------------------- */
 footer {
   position: relative;
   z-index: 1;
@@ -576,12 +580,12 @@ footer {
 .footer-inner a:hover { color: var(--cyan); }
 .footer-sep { opacity: 0.5; }
 
-/* ─── Tick SVG elements ────────────────────────────────────────────────────── */
+/* --- Tick SVG elements ------------------------------------------------------ */
 .tick-major { stroke: #2a3d5a; stroke-width: 2; }
 .tick-minor { stroke: #1e2d4a; stroke-width: 1; }
 .tick-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; fill: #475569; }
 
-/* ─── Responsive ───────────────────────────────────────────────────────────── */
+/* --- Responsive ------------------------------------------------------------- */
 @media (max-width: 560px) {
   main { padding: 24px 16px 48px; gap: 20px; }
   .test-card { padding: 24px 16px 20px; }
@@ -594,7 +598,7 @@ footer {
   .live-stat { min-width: 80px; }
 }
 
-/* ─── Spinner ──────────────────────────────────────────────────────────────── */
+/* --- Spinner ---------------------------------------------------------------- */
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner {
   width: 18px; height: 18px;
@@ -604,13 +608,13 @@ footer {
   animation: spin 0.7s linear infinite;
 }
 
-/* ─── Upload arc colour override ───────────────────────────────────────────── */
+/* --- Upload arc colour override --------------------------------------------- */
 .arc-upload {
   stroke: url(#arc-grad-upload) !important;
   filter: url(#glow-purple) !important;
 }
 
-/* ─── Thread status indicator ──────────────────────────────────────────────── */
+/* --- Thread status indicator ------------------------------------------------ */
 .thread-status {
   display: flex;
   flex-direction: column;

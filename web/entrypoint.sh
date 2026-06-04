@@ -35,6 +35,11 @@ export AGENT_ENTRIES
 SPEEDTEST_MODE="${TEST_MODE:-websocket}"
 export SPEEDTEST_MODE
 
+# Compute a short content hash from the static assets for cache-busting
+APP_VERSION=$(cat /usr/share/nginx/html/app.js /usr/share/nginx/html/style.css | md5sum | cut -c1-8)
+export APP_VERSION
+
 envsubst '${AGENT_ENTRIES} ${SPEEDTEST_MODE}' < /usr/share/nginx/html/config.js.tmpl > /usr/share/nginx/html/config.js
+envsubst '${APP_VERSION}' < /usr/share/nginx/html/index.html.tmpl > /usr/share/nginx/html/index.html
 
 exec nginx -g "daemon off;"

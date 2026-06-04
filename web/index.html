@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=${APP_VERSION}">
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -33,7 +33,7 @@
   <main>
     <div class="hero-text">
       <h1>Network Speed Test</h1>
-      <p>Measure your connection speed with precision — single or multi-threaded</p>
+      <p>Measure your connection speed with precision - single or multi-threaded</p>
     </div>
 
     <div class="test-card" id="test-card">
@@ -127,7 +127,7 @@
             <label class="control-label">Test Server</label>
             <div class="select-wrapper">
               <select id="agent-select" class="control-select">
-                <option value="loading">Loading agents…</option>
+                <option value="loading">Loading agents...</option>
               </select>
               <svg class="select-arrow" viewBox="0 0 10 6" fill="none"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </div>
@@ -225,13 +225,13 @@
 
   <footer>
     <div class="footer-inner">
-      <span>AlienX SpeedTest — Open Source</span>
-      <span class="footer-sep">·</span>
+      <span>AlienX SpeedTest - Open Source</span>
+      <span class="footer-sep">|</span>
       <a href="https://github.com/AlienXAXS/AlienX-SpeedTest" target="_blank" rel="noopener">GitHub</a>
     </div>
   </footer>
 
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js?v=${APP_VERSION}"></script>
+  <script src="app.js?v=${APP_VERSION}"></script>
 </body>
 </html>
