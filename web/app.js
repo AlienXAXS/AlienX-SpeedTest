@@ -538,7 +538,7 @@ async function runDownloadHTTP(agentUrl, threadCount) {
     running = false;
     clearInterval(interval);
   }
-  const dlHttpMbps = (totalBytes * 8) / ((performance.now() - measureStart) / 1000 / 1e6);
+  const dlHttpMbps = (totalBytes * 8) / ((performance.now() - measureStart) / 1000 * 1e6);
   console.log(`[SpeedTest] Download (HTTP) complete: ${dlHttpMbps.toFixed(2)} Mbps`);
   return dlHttpMbps;
 }
@@ -604,7 +604,7 @@ async function runUploadHTTP(agentUrl, threadCount) {
     running = false;
     clearInterval(interval);
   }
-  const ulHttpMbps = (uploadedBytes * 8) / ((performance.now() - measureStart) / 1000 / 1e6);
+  const ulHttpMbps = (uploadedBytes * 8) / ((performance.now() - measureStart) / 1000 * 1e6);
   console.log(`[SpeedTest] Upload (HTTP) complete: ${ulHttpMbps.toFixed(2)} Mbps`);
   return ulHttpMbps;
 }
