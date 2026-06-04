@@ -22,7 +22,7 @@ services:
       # For local dev the agent is exposed on host port 8081.
       AGENT_1_URL: "http://localhost:8081"
       # TEST_MODE: "websocket"   # default — accurate upload behind Cloudflare
-      # TEST_MODE: "http"        # use if WebSockets are blocked by a firewall/proxy
+      TEST_MODE: "${TEST_MODE:-websocket}"  # use if WebSockets are blocked by a firewall/proxy
     depends_on:
       - agent
     restart: unless-stopped
