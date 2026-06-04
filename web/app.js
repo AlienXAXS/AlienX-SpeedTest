@@ -5,6 +5,8 @@ const DOWNLOAD_DURATION_MS   = 10000;
 const UPLOAD_DURATION_MS     = 10000;
 const PING_COUNT             = 12;
 const CONNECT_TIMEOUT_MS     = 8000;
+const THREAD_STAGGER_MS      = 100;              // delay between spawning each thread
+const HTTP_CHUNK_SIZE        = 4 * 1024 * 1024;  // 4 MB per HTTP request (was 25 MB)
 const WS_FRAME_SIZE          = 64 * 1024;        // 64 KB per WebSocket frame
 const WS_UPLOAD_BUFFER_HIGH  = WS_FRAME_SIZE * 4; // pause sending if buffer exceeds this
 
@@ -19,6 +21,7 @@ let currentMax       = 100;
 let isRunning        = false;
 let cancelRequested  = false;
 let results          = {};
+let testController   = null;
 
 // --- Helpers ------------------------------------------------------------------
 // Polls every 50 ms so a cancel request interrupts long sleeps quickly.
@@ -101,13 +104,20 @@ function loadAgents() {
 }
 
 // --- Thread dot UI ------------------------------------------------------------
-let dotStates = [];
-let dotGeneration = 0;
+const DOT_ACTIVE_GRACE_MS = 1500; // treat thread as still active this long after last activity
+
+let dotStates          = [];
+let dotLastActiveAt    = [];  // timestamp of last time each thread entered an active state
+let dotLastActiveState = [];  // the active state class at that time (for dot colour during grace period)
+let dotGeneration      = 0;
+let dotPollInterval    = null;
 
 function initDots(count) {
   dotGeneration++;
   threadDotsEl.innerHTML = '';
-  dotStates = Array(count).fill('idle');
+  dotStates          = Array(count).fill('idle');
+  dotLastActiveAt    = Array(count).fill(0);
+  dotLastActiveState = Array(count).fill('active-download');
   for (let i = 0; i < count; i++) {
     const d = document.createElement('div');
     d.className = 'thread-dot';
@@ -115,23 +125,33 @@ function initDots(count) {
     threadDotsEl.appendChild(d);
   }
   threadStatus.style.visibility = 'visible';
-  updateThreadLabel();
+  clearInterval(dotPollInterval);
+  renderDots();
+  dotPollInterval = setInterval(renderDots, 1000);
   return dotGeneration;
 }
 
 function setDot(i, state, gen) {
   if (gen !== dotGeneration) return;
   dotStates[i] = state;
-  const el = $(`dot-${i}`);
-  if (!el) return;
-  el.className = 'thread-dot' + (state !== 'idle' ? ` ${state}` : '');
-  updateThreadLabel();
+  if (state.startsWith('active')) {
+    dotLastActiveAt[i]    = Date.now();
+    dotLastActiveState[i] = state;
+  }
 }
 
-function updateThreadLabel() {
-  const active      = dotStates.filter(s => s.startsWith('active')).length;
-  const connecting  = dotStates.filter(s => s === 'connecting').length;
-  const total       = dotStates.length;
+function renderDots() {
+  const now = Date.now();
+  let active = 0, connecting = 0;
+  dotStates.forEach((state, i) => {
+    const withinGrace = (now - dotLastActiveAt[i]) < DOT_ACTIVE_GRACE_MS;
+    const displayState = (!state.startsWith('active') && withinGrace) ? dotLastActiveState[i] : state;
+    const el = $(`dot-${i}`);
+    if (el) el.className = 'thread-dot' + (displayState !== 'idle' ? ` ${displayState}` : '');
+    if (displayState.startsWith('active')) active++;
+    else if (displayState.includes('connecting')) connecting++;
+  });
+  const total = dotStates.length;
   if (active === 0 && connecting > 0) {
     threadCountLabel.textContent = `Connecting... ${connecting} / ${total}`;
   } else if (active > 0) {
@@ -142,6 +162,8 @@ function updateThreadLabel() {
 }
 
 function hideThreadStatus() {
+  clearInterval(dotPollInterval);
+  dotPollInterval = null;
   threadStatus.style.visibility = 'hidden';
 }
 
@@ -320,7 +342,7 @@ async function runDownload(agentUrl, threadCount) {
     setDot(idx, 'idle', gen);
   };
 
-  for (let i = 0; i < threadCount; i++) doThread(i);
+  for (let i = 0; i < threadCount; i++) setTimeout(() => doThread(i), i * THREAD_STAGGER_MS);
 
   // Wait for ALL threads to connect before starting the clock
   const deadline = performance.now() + CONNECT_TIMEOUT_MS;
@@ -437,7 +459,7 @@ async function runUpload(agentUrl, threadCount) {
     setDot(idx, 'idle', gen);
   };
 
-  for (let i = 0; i < threadCount; i++) doThread(i);
+  for (let i = 0; i < threadCount; i++) setTimeout(() => doThread(i), i * THREAD_STAGGER_MS);
 
   // Wait for ALL threads to connect before starting the clock
   const deadline = performance.now() + CONNECT_TIMEOUT_MS;
@@ -474,7 +496,7 @@ async function runUpload(agentUrl, threadCount) {
 // --- HTTP fallback: Download --------------------------------------------------
 async function runDownloadHTTP(agentUrl, threadCount) {
   console.log(`[SpeedTest] Download (HTTP) started -> ${agentUrl} (${threadCount} thread${threadCount !== 1 ? 's' : ''})`);
-  const BYTES = 25 * 1024 * 1024;
+  const BYTES = HTTP_CHUNK_SIZE;
   let totalBytes     = 0;
   let running        = true;
   let measureStart   = null;
@@ -485,14 +507,11 @@ async function runDownloadHTTP(agentUrl, threadCount) {
   const doThread = async (idx) => {
     while (running) {
       setDot(idx, 'connecting', gen);
-      const controller = new AbortController();
-      const connectTimer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
       let resp;
       try {
-        resp = await fetch(`${agentUrl}/download?bytes=${BYTES}`, { cache: 'no-store', signal: controller.signal });
-        clearTimeout(connectTimer);
+        const signal = AbortSignal.any([testController.signal, AbortSignal.timeout(CONNECT_TIMEOUT_MS)]);
+        resp = await fetch(`${agentUrl}/download?bytes=${BYTES}`, { cache: 'no-store', signal });
       } catch {
-        clearTimeout(connectTimer);
         setDot(idx, 'idle', gen);
         if (!running) return;
         await sleep(500);
@@ -516,7 +535,7 @@ async function runDownloadHTTP(agentUrl, threadCount) {
     setDot(idx, 'idle', gen);
   };
 
-  for (let i = 0; i < threadCount; i++) doThread(i);
+  for (let i = 0; i < threadCount; i++) setTimeout(() => doThread(i), i * THREAD_STAGGER_MS);
 
   const deadline = performance.now() + CONNECT_TIMEOUT_MS;
   while (connectedCount < threadCount && performance.now() < deadline) await sleep(50);
@@ -546,7 +565,7 @@ async function runDownloadHTTP(agentUrl, threadCount) {
 // --- HTTP fallback: Upload ----------------------------------------------------
 async function runUploadHTTP(agentUrl, threadCount) {
   console.log(`[SpeedTest] Upload (HTTP) started -> ${agentUrl} (${threadCount} thread${threadCount !== 1 ? 's' : ''})`);
-  const BLOB_SIZE = 25 * 1024 * 1024;
+  const BLOB_SIZE = HTTP_CHUNK_SIZE;
   const blob = new Blob([new Uint8Array(BLOB_SIZE)]);
   let uploadedBytes  = 0;
   let running        = true;
@@ -563,18 +582,15 @@ async function runUploadHTTP(agentUrl, threadCount) {
     while (!measureStart) await sleep(20);
     setDot(idx, 'active-upload', gen);
     while (running) {
-      const controller = new AbortController();
-      const reqTimer = setTimeout(() => controller.abort(), 20000);
       try {
+        const signal = AbortSignal.any([testController.signal, AbortSignal.timeout(20000)]);
         const resp = await fetch(`${agentUrl}/upload?_=${Date.now()}`, {
           method: 'POST', body: blob,
           headers: { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store, no-cache', 'Pragma': 'no-cache' },
-          cache: 'no-store', signal: controller.signal,
+          cache: 'no-store', signal,
         });
-        clearTimeout(reqTimer);
         if (resp.ok) uploadedBytes += BLOB_SIZE;
       } catch {
-        clearTimeout(reqTimer);
         if (!running) break;
         await sleep(200);
       }
@@ -582,7 +598,7 @@ async function runUploadHTTP(agentUrl, threadCount) {
     setDot(idx, 'idle', gen);
   };
 
-  for (let i = 0; i < threadCount; i++) doThread(i);
+  for (let i = 0; i < threadCount; i++) setTimeout(() => doThread(i), i * THREAD_STAGGER_MS);
 
   const deadline = performance.now() + CONNECT_TIMEOUT_MS;
   while (connectedCount < threadCount && performance.now() < deadline) await sleep(50);
@@ -677,6 +693,7 @@ startBtn.addEventListener('click', async () => {
   if (isRunning) {
     if (cancelRequested) return; // already cancelling, ignore double-click
     cancelRequested = true;
+    testController?.abort();
     console.log('[SpeedTest] Cancel requested');
     startBtn.classList.remove('running');
     startBtn.classList.add('cancelling');
@@ -691,6 +708,7 @@ startBtn.addEventListener('click', async () => {
 
   isRunning       = true;
   cancelRequested = false;
+  testController  = new AbortController();
   console.log(`[SpeedTest] Test started: server="${serverName}" threads=${threads} mode=${USE_WEBSOCKET ? 'websocket' : 'http'}`);
   resultsCard.style.display = 'none';
   resetSpeedometer();
