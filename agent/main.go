@@ -37,7 +37,7 @@ func cors(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Requested-With, Cache-Control, Pragma")
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
