@@ -28,6 +28,13 @@ if [ -z "$AGENT_ENTRIES" ]; then
 fi
 
 export AGENT_ENTRIES
-envsubst '${AGENT_ENTRIES}' < /usr/share/nginx/html/config.js.tmpl > /usr/share/nginx/html/config.js
+
+# TEST_MODE controls whether the browser uses WebSocket or plain HTTP for tests.
+# 'websocket' (default) — bypasses proxy upload buffering (e.g. Cloudflare).
+# 'http'                — broader firewall/proxy compatibility.
+SPEEDTEST_MODE="${TEST_MODE:-websocket}"
+export SPEEDTEST_MODE
+
+envsubst '${AGENT_ENTRIES} ${SPEEDTEST_MODE}' < /usr/share/nginx/html/config.js.tmpl > /usr/share/nginx/html/config.js
 
 exec nginx -g "daemon off;"

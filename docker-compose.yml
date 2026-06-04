@@ -21,6 +21,8 @@ services:
       # This URL must be reachable from the end-user's browser, not the web container.
       # For local dev the agent is exposed on host port 8081.
       AGENT_1_URL: "http://localhost:8081"
+      # TEST_MODE: "websocket"   # default — accurate upload behind Cloudflare
+      # TEST_MODE: "http"        # use if WebSockets are blocked by a firewall/proxy
     depends_on:
       - agent
     restart: unless-stopped

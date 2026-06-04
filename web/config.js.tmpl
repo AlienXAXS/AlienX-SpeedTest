@@ -2,3 +2,5 @@
 window.SPEEDTEST_AGENTS = [
   ${AGENT_ENTRIES}
 ];
+// 'websocket' (default) or 'http' — set via TEST_MODE env var on the web container
+window.SPEEDTEST_MODE = '${SPEEDTEST_MODE}';

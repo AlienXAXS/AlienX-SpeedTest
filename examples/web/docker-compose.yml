@@ -1,0 +1,18 @@
+# Deployed at: speed.alienxservers.co.uk
+# Cloudflare proxies HTTPS → port 80 on this host.
+#
+# Add more agents by incrementing AGENT_N_NAME / AGENT_N_URL (up to 5).
+# Agent URLs must be publicly reachable by the end-user's browser.
+
+services:
+  web:
+    image: ghcr.io/alienxaxs/alienx-speedtest-web:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      AGENT_1_NAME: "UK - London"
+      AGENT_1_URL:  "https://uk.speed.alienxservers.co.uk"
+      # AGENT_2_NAME: "US - New York"
+      # AGENT_2_URL:  "https://us.speed.alienxservers.co.uk"
+      TEST_MODE: "websocket"

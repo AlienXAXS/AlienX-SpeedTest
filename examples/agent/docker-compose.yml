@@ -1,0 +1,12 @@
+# Deployed at: uk.speed.alienxservers.co.uk  (or us., de., etc.)
+# Cloudflare proxies HTTPS → port 80 on this host.
+# The agent listens on 8081 internally; we map it to port 80 for Cloudflare.
+
+services:
+  agent:
+    image: ghcr.io/alienxaxs/alienx-speedtest-agent:latest
+    restart: unless-stopped
+    ports:
+      - "80:8081"
+    environment:
+      AGENT_NAME: "UK - London"

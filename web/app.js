@@ -199,6 +199,9 @@ function allPhaseDone() {
   phaseLabel.textContent = 'COMPLETE';
 }
 
+// ─── Mode ─────────────────────────────────────────────────────────────────────
+const USE_WEBSOCKET = (window.SPEEDTEST_MODE || 'websocket') !== 'http';
+
 // ─── Ping test (HTTP — no buffering concern here) ─────────────────────────────
 async function runPing(agentUrl) {
   const latencies = [];
@@ -394,6 +397,120 @@ async function runUpload(agentUrl, threadCount) {
   return (totalAcked * 8) / (finalSec * 1e6);
 }
 
+// ─── HTTP fallback: Download ──────────────────────────────────────────────────
+async function runDownloadHTTP(agentUrl, threadCount) {
+  const BYTES = 25 * 1024 * 1024;
+  let totalBytes   = 0;
+  let running      = true;
+  let measureStart = null;
+
+  initDots(threadCount);
+
+  const doThread = async (idx) => {
+    while (running) {
+      setDot(idx, 'connecting');
+      const controller = new AbortController();
+      const connectTimer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
+      let resp;
+      try {
+        resp = await fetch(`${agentUrl}/download?bytes=${BYTES}`, { cache: 'no-store', signal: controller.signal });
+        clearTimeout(connectTimer);
+      } catch {
+        clearTimeout(connectTimer);
+        setDot(idx, 'idle');
+        if (!running) return;
+        await sleep(500);
+        continue;
+      }
+      setDot(idx, 'active-download');
+      if (!measureStart) measureStart = performance.now();
+      const reader = resp.body.getReader();
+      try {
+        while (running) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          totalBytes += value.byteLength;
+        }
+      } catch { /* interrupted */ }
+    }
+    setDot(idx, 'idle');
+  };
+
+  for (let i = 0; i < threadCount; i++) doThread(i);
+
+  const deadline = performance.now() + CONNECT_TIMEOUT_MS + 1000;
+  while (!measureStart && performance.now() < deadline) await sleep(100);
+  if (!measureStart) throw new Error('HTTP download threads could not connect to the agent.');
+
+  const interval = setInterval(() => {
+    const elapsed = (performance.now() - measureStart) / 1000;
+    if (elapsed > 0.1) {
+      const mbps = (totalBytes * 8) / (elapsed * 1e6);
+      updateSpeedometer(mbps, 'download');
+      liveDownload.textContent = mbps.toFixed(1);
+    }
+  }, 200);
+
+  await sleep(DOWNLOAD_DURATION_MS);
+  running = false;
+  clearInterval(interval);
+  return (totalBytes * 8) / ((performance.now() - measureStart) / 1000 / 1e6);
+}
+
+// ─── HTTP fallback: Upload ────────────────────────────────────────────────────
+async function runUploadHTTP(agentUrl, threadCount) {
+  const BLOB_SIZE = 25 * 1024 * 1024;
+  const blob = new Blob([new Uint8Array(BLOB_SIZE)]);
+  let uploadedBytes = 0;
+  let running       = true;
+  let measureStart  = null;
+
+  initDots(threadCount);
+
+  const doThread = async (idx) => {
+    while (running) {
+      setDot(idx, 'active-upload');
+      if (!measureStart) measureStart = performance.now();
+      const controller = new AbortController();
+      const reqTimer = setTimeout(() => controller.abort(), 20000);
+      try {
+        const resp = await fetch(`${agentUrl}/upload?_=${Date.now()}`, {
+          method: 'POST', body: blob,
+          headers: { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store, no-cache', 'Pragma': 'no-cache' },
+          cache: 'no-store', signal: controller.signal,
+        });
+        clearTimeout(reqTimer);
+        if (resp.ok) uploadedBytes += BLOB_SIZE;
+      } catch {
+        clearTimeout(reqTimer);
+        if (!running) { setDot(idx, 'idle'); return; }
+        await sleep(200);
+      }
+    }
+    setDot(idx, 'idle');
+  };
+
+  for (let i = 0; i < threadCount; i++) doThread(i);
+
+  const deadline = performance.now() + CONNECT_TIMEOUT_MS + 1000;
+  while (!measureStart && performance.now() < deadline) await sleep(100);
+  if (!measureStart) throw new Error('HTTP upload threads could not reach the agent.');
+
+  const interval = setInterval(() => {
+    const elapsed = (performance.now() - measureStart) / 1000;
+    if (elapsed > 0.1) {
+      const mbps = (uploadedBytes * 8) / (elapsed * 1e6);
+      updateSpeedometer(mbps, 'upload');
+      liveUpload.textContent = mbps.toFixed(1);
+    }
+  }, 200);
+
+  await sleep(UPLOAD_DURATION_MS);
+  running = false;
+  clearInterval(interval);
+  return (uploadedBytes * 8) / ((performance.now() - measureStart) / 1000 / 1e6);
+}
+
 // ─── Results ──────────────────────────────────────────────────────────────────
 function formatSpeed(mbps) {
   if (mbps >= 1000) return `${(mbps / 1000).toFixed(2)} Gbps`;
@@ -479,21 +596,25 @@ startBtn.addEventListener('click', async () => {
     const pingResult = await runPing(agentUrl);
     livePing.textContent = pingResult.ping.toFixed(1);
 
-    // ── Download (WebSocket) ──────────────────────────────────────────────────
+    // ── Download ──────────────────────────────────────────────────────────────
     setArcFraction(0, 'download');
     speedValue.textContent = '0.00';
     setPhase('download');
-    const downloadMbps = await runDownload(agentUrl, threads);
+    const downloadMbps = USE_WEBSOCKET
+      ? await runDownload(agentUrl, threads)
+      : await runDownloadHTTP(agentUrl, threads);
     liveDownload.textContent = downloadMbps.toFixed(1);
 
-    // ── Upload (WebSocket) ────────────────────────────────────────────────────
+    // ── Upload ────────────────────────────────────────────────────────────────
     currentMax = 100;
     scaleMax.textContent = '100';
     drawTicks();
     setArcFraction(0, 'upload');
     speedValue.textContent = '0.00';
     setPhase('upload');
-    const uploadMbps = await runUpload(agentUrl, threads);
+    const uploadMbps = USE_WEBSOCKET
+      ? await runUpload(agentUrl, threads)
+      : await runUploadHTTP(agentUrl, threads);
     liveUpload.textContent = uploadMbps.toFixed(1);
 
     // ── Done ──────────────────────────────────────────────────────────────────
