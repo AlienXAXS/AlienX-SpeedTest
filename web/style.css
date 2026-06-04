@@ -645,6 +645,11 @@ footer {
   animation: pulse-dot 0.9s ease-in-out infinite;
 }
 
+.thread-dot.connecting-upload {
+  background: rgba(168, 85, 247, 0.25);
+  animation: pulse-dot 0.9s ease-in-out infinite;
+}
+
 .thread-dot.active-download {
   background: var(--cyan);
   box-shadow: 0 0 7px var(--cyan-glow);

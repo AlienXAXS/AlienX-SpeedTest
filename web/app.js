@@ -221,9 +221,10 @@ async function runPing(agentUrl) {
 // N connections receive binary frames from the server; we count bytes as they arrive.
 async function runDownload(agentUrl, threadCount) {
   const wsUrl = toWsUrl(agentUrl, '/ws/download');
-  let totalBytes   = 0;
-  let measureStart = null;
-  let running      = true;
+  let totalBytes     = 0;
+  let measureStart   = null;
+  let running        = true;
+  let connectedCount = 0;
 
   initDots(threadCount);
 
@@ -237,7 +238,6 @@ async function runDownload(agentUrl, threadCount) {
         catch { resolve(); return; }
         ws.binaryType = 'arraybuffer';
 
-        // Close the socket when the test ends
         const stopWatcher = setInterval(() => {
           if (!running && ws.readyState === WebSocket.OPEN) {
             ws.close(1000, 'test complete');
@@ -246,8 +246,8 @@ async function runDownload(agentUrl, threadCount) {
         }, 50);
 
         ws.onopen = () => {
+          connectedCount++;
           setDot(idx, 'active-download');
-          if (!measureStart) measureStart = performance.now();
         };
 
         ws.onmessage = (e) => {
@@ -258,23 +258,25 @@ async function runDownload(agentUrl, threadCount) {
 
         ws.onclose = () => {
           clearInterval(stopWatcher);
+          connectedCount = Math.max(0, connectedCount - 1);
           setDot(idx, 'idle');
           resolve();
         };
       });
 
       if (!running) break;
-      await sleep(200); // brief pause before reconnecting if the server closed the socket
+      await sleep(200);
     }
     setDot(idx, 'idle');
   };
 
   for (let i = 0; i < threadCount; i++) doThread(i);
 
-  // Wait for first connection or give up
-  const deadline = performance.now() + CONNECT_TIMEOUT_MS + 1000;
-  while (!measureStart && performance.now() < deadline) await sleep(100);
-  if (!measureStart) throw new Error('WebSocket download connections timed out — is the agent running?');
+  // Wait for ALL threads to connect before starting the clock
+  const deadline = performance.now() + CONNECT_TIMEOUT_MS;
+  while (connectedCount < threadCount && performance.now() < deadline) await sleep(50);
+  if (connectedCount === 0) throw new Error('WebSocket download connections timed out — is the agent running?');
+  measureStart = performance.now();
 
   const interval = setInterval(() => {
     const elapsed = (performance.now() - measureStart) / 1000;
@@ -304,16 +306,20 @@ async function runUpload(agentUrl, threadCount) {
   const frameBuffer = new ArrayBuffer(WS_FRAME_SIZE);
   new Uint8Array(frameBuffer).fill(0xAB);
 
-  // Per-thread server-acknowledged byte counts
+  // Per-thread server-acknowledged byte counts.
+  // base tracks bytes from previous connections so reconnects don't reset totals.
   const serverReceived = new Array(threadCount).fill(0);
-  let measureStart = null;
-  let running      = true;
+  const serverReceivedBase = new Array(threadCount).fill(0);
+  let measureStart   = null;
+  let running        = true;
+  let connectedCount = 0;
 
   initDots(threadCount);
 
   const doThread = async (idx) => {
     while (running) {
-      setDot(idx, 'connecting');
+      setDot(idx, 'connecting-upload');
+      serverReceivedBase[idx] += serverReceived[idx];
       serverReceived[idx] = 0;
 
       await new Promise((resolve) => {
@@ -330,26 +336,27 @@ async function runUpload(agentUrl, threadCount) {
         }, 50);
 
         ws.onopen = () => {
+          connectedCount++;
           setDot(idx, 'active-upload');
-          if (!measureStart) measureStart = performance.now();
 
-          // Send frames as fast as the socket buffer allows
-          const sendLoop = () => {
-            if (!running || ws.readyState !== WebSocket.OPEN) return;
-            if (ws.bufferedAmount > WS_UPLOAD_BUFFER_HIGH) {
-              // Back off briefly to avoid over-filling the browser send buffer,
-              // which would inflate the apparent throughput above actual link speed
-              setTimeout(sendLoop, 5);
-              return;
-            }
-            ws.send(frameBuffer);
-            setTimeout(sendLoop, 0);
+          // Don't start sending until measureStart is set (all threads connected)
+          const waitAndSend = () => {
+            if (!measureStart) { setTimeout(waitAndSend, 20); return; }
+            const sendLoop = () => {
+              if (!running || ws.readyState !== WebSocket.OPEN) return;
+              if (ws.bufferedAmount > WS_UPLOAD_BUFFER_HIGH) {
+                setTimeout(sendLoop, 5);
+                return;
+              }
+              ws.send(frameBuffer);
+              setTimeout(sendLoop, 0);
+            };
+            sendLoop();
           };
-          sendLoop();
+          waitAndSend();
         };
 
         ws.onmessage = (e) => {
-          // ACK from server: {"received": N}
           try {
             const ack = JSON.parse(e.data);
             if (typeof ack.received === 'number') serverReceived[idx] = ack.received;
@@ -360,6 +367,7 @@ async function runUpload(agentUrl, threadCount) {
 
         ws.onclose = () => {
           clearInterval(stopWatcher);
+          connectedCount = Math.max(0, connectedCount - 1);
           setDot(idx, 'idle');
           resolve();
         };
@@ -373,15 +381,17 @@ async function runUpload(agentUrl, threadCount) {
 
   for (let i = 0; i < threadCount; i++) doThread(i);
 
-  // Wait for first connection or give up
-  const deadline = performance.now() + CONNECT_TIMEOUT_MS + 1000;
-  while (!measureStart && performance.now() < deadline) await sleep(100);
-  if (!measureStart) throw new Error('WebSocket upload connections timed out — is the agent running?');
+  // Wait for ALL threads to connect before starting the clock
+  const deadline = performance.now() + CONNECT_TIMEOUT_MS;
+  while (connectedCount < threadCount && performance.now() < deadline) await sleep(50);
+  if (connectedCount === 0) throw new Error('WebSocket upload connections timed out — is the agent running?');
+  measureStart = performance.now();
 
   const interval = setInterval(() => {
     const elapsed = (performance.now() - measureStart) / 1000;
     if (elapsed > 0.1) {
-      const totalAcked = serverReceived.reduce((a, b) => a + b, 0);
+      const totalAcked = serverReceived.reduce((a, b) => a + b, 0) +
+                         serverReceivedBase.reduce((a, b) => a + b, 0);
       const mbps = (totalAcked * 8) / (elapsed * 1e6);
       updateSpeedometer(mbps, 'upload');
       liveUpload.textContent = mbps.toFixed(1);
@@ -392,17 +402,19 @@ async function runUpload(agentUrl, threadCount) {
   running = false;
   clearInterval(interval);
 
-  const finalSec    = (performance.now() - measureStart) / 1000;
-  const totalAcked  = serverReceived.reduce((a, b) => a + b, 0);
+  const finalSec   = (performance.now() - measureStart) / 1000;
+  const totalAcked = serverReceived.reduce((a, b) => a + b, 0) +
+                     serverReceivedBase.reduce((a, b) => a + b, 0);
   return (totalAcked * 8) / (finalSec * 1e6);
 }
 
 // ─── HTTP fallback: Download ──────────────────────────────────────────────────
 async function runDownloadHTTP(agentUrl, threadCount) {
   const BYTES = 25 * 1024 * 1024;
-  let totalBytes   = 0;
-  let running      = true;
-  let measureStart = null;
+  let totalBytes     = 0;
+  let running        = true;
+  let measureStart   = null;
+  let connectedCount = 0;
 
   initDots(threadCount);
 
@@ -422,8 +434,10 @@ async function runDownloadHTTP(agentUrl, threadCount) {
         await sleep(500);
         continue;
       }
+      connectedCount++;
       setDot(idx, 'active-download');
-      if (!measureStart) measureStart = performance.now();
+      // Wait for measureStart to be set (all threads connected) before counting bytes
+      while (!measureStart) await sleep(20);
       const reader = resp.body.getReader();
       try {
         while (running) {
@@ -432,15 +446,17 @@ async function runDownloadHTTP(agentUrl, threadCount) {
           totalBytes += value.byteLength;
         }
       } catch { /* interrupted */ }
+      connectedCount = Math.max(0, connectedCount - 1);
     }
     setDot(idx, 'idle');
   };
 
   for (let i = 0; i < threadCount; i++) doThread(i);
 
-  const deadline = performance.now() + CONNECT_TIMEOUT_MS + 1000;
-  while (!measureStart && performance.now() < deadline) await sleep(100);
-  if (!measureStart) throw new Error('HTTP download threads could not connect to the agent.');
+  const deadline = performance.now() + CONNECT_TIMEOUT_MS;
+  while (connectedCount < threadCount && performance.now() < deadline) await sleep(50);
+  if (connectedCount === 0) throw new Error('HTTP download threads could not connect to the agent.');
+  measureStart = performance.now();
 
   const interval = setInterval(() => {
     const elapsed = (performance.now() - measureStart) / 1000;
@@ -461,16 +477,20 @@ async function runDownloadHTTP(agentUrl, threadCount) {
 async function runUploadHTTP(agentUrl, threadCount) {
   const BLOB_SIZE = 25 * 1024 * 1024;
   const blob = new Blob([new Uint8Array(BLOB_SIZE)]);
-  let uploadedBytes = 0;
-  let running       = true;
-  let measureStart  = null;
+  let uploadedBytes  = 0;
+  let running        = true;
+  let measureStart   = null;
+  let connectedCount = 0;
 
   initDots(threadCount);
 
   const doThread = async (idx) => {
+    setDot(idx, 'connecting-upload');
+    connectedCount++;
+    // Wait for all threads to be ready before starting
+    while (!measureStart) await sleep(20);
+    setDot(idx, 'active-upload');
     while (running) {
-      setDot(idx, 'active-upload');
-      if (!measureStart) measureStart = performance.now();
       const controller = new AbortController();
       const reqTimer = setTimeout(() => controller.abort(), 20000);
       try {
@@ -483,7 +503,7 @@ async function runUploadHTTP(agentUrl, threadCount) {
         if (resp.ok) uploadedBytes += BLOB_SIZE;
       } catch {
         clearTimeout(reqTimer);
-        if (!running) { setDot(idx, 'idle'); return; }
+        if (!running) break;
         await sleep(200);
       }
     }
@@ -492,9 +512,10 @@ async function runUploadHTTP(agentUrl, threadCount) {
 
   for (let i = 0; i < threadCount; i++) doThread(i);
 
-  const deadline = performance.now() + CONNECT_TIMEOUT_MS + 1000;
-  while (!measureStart && performance.now() < deadline) await sleep(100);
-  if (!measureStart) throw new Error('HTTP upload threads could not reach the agent.');
+  const deadline = performance.now() + CONNECT_TIMEOUT_MS;
+  while (connectedCount < threadCount && performance.now() < deadline) await sleep(50);
+  if (connectedCount === 0) throw new Error('HTTP upload threads could not reach the agent.');
+  measureStart = performance.now();
 
   const interval = setInterval(() => {
     const elapsed = (performance.now() - measureStart) / 1000;
